@@ -2,6 +2,8 @@ services:
   backend:
     build: ./backend
     container_name: deepseek-ocr-backend
+    runtime: nvidia
+    ipc: host
     env_file:
       - .env
     environment:
@@ -10,19 +12,25 @@ services:
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8000}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
-      CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-4}
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-4}
-      PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8}
+      HF_HUB_OFFLINE: "1"
+      # NVIDIA_VISIBLE_DEVICES controls which host GPU(s) are exposed to the container
+      # The exposed GPU will be remapped to cuda:0 inside the container
+      NVIDIA_VISIBLE_DEVICES: "4"
+      # PyTorch CUDA memory allocator configuration
+      # Removed expandable_segments as it conflicts with some operations
+      PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:512"
     volumes:
-      - ./models:/models
+      - /data/model:/models
+      - ./backend:/app
+    privileged: true
+    shm_size: "4g"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['4']
+              count: 1
               capabilities: [gpu]
-    shm_size: "4g"
     ports:
       - "${API_PORT:-8000}:${API_PORT:-8000}"
     networks:
@@ -41,3 +49,4 @@ services:
 networks:
   ocr-network:
     driver: bridge
+

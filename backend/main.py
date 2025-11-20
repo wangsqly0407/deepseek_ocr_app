@@ -30,23 +30,47 @@ from format_converter import DocumentConverter
 # -----------------------------
 model = None
 tokenizer = None
+device = None  # Global device variable
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load model on startup, cleanup on shutdown"""
-    global model, tokenizer
-    
+    global model, tokenizer, device
+
     # Environment setup
     os.environ.pop("TRANSFORMERS_CACHE", None)
     MODEL_NAME = env_config("MODEL_NAME", default="/models/DeepSeek-OCR")
     HF_HOME = env_config("HF_HOME", default="/models")
     os.makedirs(HF_HOME, exist_ok=True)
 
-    # GPU device selection
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
-    target_gpu_id = cuda_visible_devices.split(",")[0].strip()
-    device = f"cuda:{target_gpu_id}" if torch.cuda.is_available() else "cpu"
-    print(f"🎯 Using GPU device: {device}")
+    # GPU device selection with better fallback
+    if torch.cuda.is_available():
+        try:
+            # When using NVIDIA_VISIBLE_DEVICES in Docker, the specified GPU is remapped to cuda:0
+            # regardless of the original GPU ID on the host
+            # Example: NVIDIA_VISIBLE_DEVICES=4 makes host GPU 4 available as cuda:0 in container
+
+            num_gpus = torch.cuda.device_count()
+            print(f"📊 Available GPUs in container: {num_gpus}")
+
+            # Always use cuda:0 as it's the first (and typically only) GPU in the container
+            device = "cuda:0"
+
+            # Test if GPU is actually accessible
+            test_tensor = torch.zeros(1).to(device)
+            gpu_name = torch.cuda.get_device_name(0)
+
+            # Get host GPU ID from env for logging
+            host_gpu = os.environ.get("NVIDIA_VISIBLE_DEVICES", "unknown")
+            print(f"🎯 Using GPU device: {device} ({gpu_name}, host GPU {host_gpu})")
+            del test_tensor  # Clean up test tensor
+        except Exception as e:
+            print(f"⚠️ GPU not accessible: {e}")
+            device = "cpu"
+            print(f"🎯 Falling back to CPU")
+    else:
+        device = "cpu"
+        print(f"🎯 Using CPU (CUDA not available)")
 
     # Load model
     print(f"🚀 Loading {MODEL_NAME}...")
@@ -321,20 +345,36 @@ async def ocr_inference(
             orig_w = orig_h = None
         
         out_dir = tempfile.mkdtemp(prefix="dsocr_")
-        
-        # Run inference
-        res = model.infer(
-            tokenizer,
-            prompt=prompt_text,
-            image_file=tmp_img,
-            output_path=out_dir,
-            base_size=base_size,
-            image_size=image_size,
-            crop_mode=crop_mode,
-            save_results=False,
-            test_compress=test_compress,
-            eval_mode=True,
-        )
+
+        # Run inference with explicit device control
+        # Use CPU context when device is CPU to avoid CUDA autocast errors
+        if device == "cpu":
+            with torch.cpu.amp.autocast(enabled=False):
+                res = model.infer(
+                    tokenizer,
+                    prompt=prompt_text,
+                    image_file=tmp_img,
+                    output_path=out_dir,
+                    base_size=base_size,
+                    image_size=image_size,
+                    crop_mode=crop_mode,
+                    save_results=False,
+                    test_compress=test_compress,
+                    eval_mode=True,
+                )
+        else:
+            res = model.infer(
+                tokenizer,
+                prompt=prompt_text,
+                image_file=tmp_img,
+                output_path=out_dir,
+                base_size=base_size,
+                image_size=image_size,
+                crop_mode=crop_mode,
+                save_results=False,
+                test_compress=test_compress,
+                eval_mode=True,
+            )
         
         # Normalize response
         if isinstance(res, str):
