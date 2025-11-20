@@ -1,5 +1,5 @@
 # Backend Dockerfile - FastAPI + DeepSeek-OCR
-FROM nvcr.io/nvidia/pytorch:25.09-py3
+FROM nvcr.io/nvidia/pytorch:24.07-py3
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

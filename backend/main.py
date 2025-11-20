@@ -38,10 +38,16 @@ async def lifespan(app: FastAPI):
     
     # Environment setup
     os.environ.pop("TRANSFORMERS_CACHE", None)
-    MODEL_NAME = env_config("MODEL_NAME", default="deepseek-ai/DeepSeek-OCR")
+    MODEL_NAME = env_config("MODEL_NAME", default="/models/DeepSeek-OCR")
     HF_HOME = env_config("HF_HOME", default="/models")
     os.makedirs(HF_HOME, exist_ok=True)
-    
+
+    # GPU device selection
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+    target_gpu_id = cuda_visible_devices.split(",")[0].strip()
+    device = f"cuda:{target_gpu_id}" if torch.cuda.is_available() else "cpu"
+    print(f"🎯 Using GPU device: {device}")
+
     # Load model
     print(f"🚀 Loading {MODEL_NAME}...")
     torch_dtype = torch.bfloat16
@@ -49,15 +55,17 @@ async def lifespan(app: FastAPI):
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_NAME,
         trust_remote_code=True,
+        local_files_only=True,
     )
-    
+
     model = AutoModel.from_pretrained(
         MODEL_NAME,
         trust_remote_code=True,
         use_safetensors=True,
         attn_implementation="eager",
         torch_dtype=torch_dtype,
-    ).eval().to("cuda")
+        local_files_only=True,
+    ).eval().to(device)
     
     # Pad token setup
     try:
